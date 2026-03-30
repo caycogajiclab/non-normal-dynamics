@@ -99,8 +99,7 @@ class RNNSequence:
         
         t = torch.tensor([0], dtype=torch.float64)
         self.W_ih = t.repeat(self.n_neuron,1).squeeze(-1)
-        W_ih = self.W_ih.clone()
-        W_ih[self.chain_idx-1] = 1.
+        self.W_ih[self.chain_idx-1] = 1.
 
     def _generate_sequence(self) -> None:
         hidden_units = []
