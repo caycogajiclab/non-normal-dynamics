@@ -33,12 +33,12 @@ class SequentialRNN(nn.Module):
     def __init__(self, input_dim, hidden_dim, activation_function='linear', rotation=False, extrinsic_noise=0., intrinsic_noise=0., amplification=10):
         super().__init__()
         self.W_hh = nn.Linear(hidden_dim,hidden_dim,bias=False)
-        torch.nn.init.uniform_(self.W_hh.weight, a=0.0001, b=0.1) # weight initialization
+        torch.nn.init.uniform_(self.W_hh.weight, a=-0.01, b=0.1) # weight initialization
         self.h0 = nn.Parameter(torch.zeros(hidden_dim), requires_grad=False) # fixed initial hidden state
         self.dt = nn.Parameter(torch.tensor(0.1)) # learnable time step
         self.extrinsic_noise = extrinsic_noise 
         self.intrinsic_noise = intrinsic_noise 
-        self.W_ih = torch.tensor(np.identity(hidden_dim)*amplification)[:input_dim] # first Schur Mode, input signal has to be amplified
+        self.W_ih = torch.tensor(np.identity(hidden_dim)*amplification)[0] # first Schur Mode, input signal has to be amplified
         self.rotation = rotation
         if self.rotation:
             Q, _ = np.linalg.qr(np.random.randn(hidden_dim, hidden_dim))
@@ -64,7 +64,7 @@ class SequentialRNN(nn.Module):
         outputs = []
         for t in range(seq_len):
             xt = x[:, t, :]  # extract time slice for batch_first (batch, input_dim)
-            h = h0 + self.activation_function(time_step*(h0 @ W_hh.T + W_ih * xt))
+            h = h0 + time_step*(self.activation_function(h0 @ W_hh.T + W_ih * xt))
             h0 = h
             y = h
             if self.rotation:

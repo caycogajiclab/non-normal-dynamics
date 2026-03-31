@@ -1,6 +1,8 @@
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 
@@ -148,10 +150,6 @@ def plot_ground_truth(sample,T,D,rotated_W):
         row=2, col=4
     )
 
-
-
-
-
     fig.update_layout(
         width=1000,
         height=500,
@@ -160,6 +158,35 @@ def plot_ground_truth(sample,T,D,rotated_W):
 
     return fig
 
+
+
+
+
+def plot_interm_fig_plt(output,losses,weights):
+    plt.rcParams["figure.figsize"] = (6,3)
+    plt.style.use('ggplot')
+    plt.rcParams['axes.facecolor']='w'
+
+    fig, ax = plt.subplots(1,3,figsize=(15,3.5))
+    fig.subplots_adjust(top=0.8)
+    
+    ax[0] = sns.heatmap(weights, cmap="coolwarm", ax=ax[0])
+    ax[0].set_title('Learned Weights')
+    
+    ax[1].plot(output)
+    ax[1].set_title('Test Prediction')
+
+    ax[2].plot(losses)
+    ax[2].set_title('MSE')
+
+    fig.suptitle('Pulse Sequence Generation from RNN', fontsize=16, y=0.98)
+
+    for a in ax:
+        if a != ax[0]:
+            a.grid(True, which="major", color="#BBB", linestyle="-", alpha=0.3)
+
+    return fig
+    
 
 
 
