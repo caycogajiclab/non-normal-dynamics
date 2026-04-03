@@ -3,10 +3,10 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=cpu_p1
-#SBATCH --time=6:00:0
+#SBATCH --time=0:30:0
 #SBATCH --array=1-20
 #SBATCH --output=/lustre/fsn1/projects/rech/pbx/utg98xt/slurm-%j.log
-#SBATCH --chdir=/lustre/fshomisc/home/rech/genolx01/utg98xt/unitary-optimization-manopt/dynamics/
+#SBATCH --chdir=/lustre/fshomisc/home/rech/genolx01/utg98xt/non-normal-dynamics/scripts/rotated_network/
 date;hostname;id;pwd
 
 echo 'activating virtual environment'
@@ -23,5 +23,5 @@ mkdir -p $WANDB_DIR
 
 echo "Running sweep task ${SLURM_ARRAY_TASK_ID}"
 
-python hyperparam-search.py \
-	--sweep_id $((SLURM_ARRAY_TASK_ID)) --dim 8 --n_epochs 10000 --activation_function tanh
+python hyperparam_search.py \
+	--sweep_id $((SLURM_ARRAY_TASK_ID)) --dim 8 --n_epochs 100 --activation_function tanh
