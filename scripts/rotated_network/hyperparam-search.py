@@ -1,5 +1,9 @@
 import torch as torch
 import torch.nn.functional as F
+import sys
+from pathlib import Path
+REPO_ROOT = Path.cwd().parent
+sys.path.append(str(REPO_ROOT))
 from src.data.generation import GaussianPulseDataset
 from src.utils.plotting import plot_interm_fig, plot_ground_truth
 from src.models.rnn import SequentialRNN
