@@ -115,7 +115,7 @@ def main(args, hps=None):
 
     # pack dataset and initialize model and optimizer
     loader = torch.utils.data.DataLoader(gps, batch_size=config.batch_size, shuffle=True)
-    model = SequentialRNN(input_size, n_neurons, activation_function=args.activation_function, rotation=args.with_rotation, noise=args.noise)
+    model = SequentialRNN(input_size, n_neurons, activation_function=args.activation_function, rotation=args.with_rotation, extrinsic_noise=args.noise)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.starting_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,T_0=10,T_mult=2,eta_min=config.eta_min)
 
