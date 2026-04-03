@@ -2,7 +2,7 @@ import torch as torch
 import torch.nn.functional as F
 import sys
 from pathlib import Path
-REPO_ROOT = Path.cwd().parent
+REPO_ROOT = Path.cwd().parent.parent
 sys.path.append(str(REPO_ROOT))
 from src.data.generation import GaussianPulseDataset
 from src.utils.plotting import plot_interm_fig, plot_ground_truth
@@ -22,6 +22,18 @@ import json
 def loss_function(y, y_hat):
     return F.mse_loss(y,y_hat)
 
+
+def eigen_imag_score(eigvals):
+    """Lower is better: mean absolute imaginary part of eigenvalues."""
+    imag_parts = np.abs(np.imag(eigvals))
+    return float(np.mean(imag_parts))
+
+
+def combined_score(avg_mse_loss, eig_imag, lambda_im=1.0):
+    """Composite loss used for selection of best hyperparameters."""
+    return float(avg_mse_loss + lambda_im * eig_imag)
+
+
 def sample_hyperparameters(seed):
     random.seed(seed)
 
@@ -34,12 +46,38 @@ def sample_hyperparameters(seed):
         "starting_lr": math.exp(random.uniform(math.log(1e-5), math.log(0.1))),
     }
 
-def main(args):
+def train(model, loader, optimizer, scheduler, config, n_epochs):
+    model.train()
+    for epoch in range(n_epochs):
+        for (X, y) in loader:
+            optimizer.zero_grad()
+            y_pred = model(X)
+            mask = y > 0
+            anti_mask = y == 0
+            l2_regularization = config.l2_reg*torch.linalg.norm(model.W_hh.weight, ord=2)
+            masked_loss = config.masked_reg*loss_function(y[mask],y_pred[mask])
+            anti_masked_loss = config.anti_masked_reg*loss_function(y[anti_mask],y_pred[anti_mask])
+            loss = masked_loss + anti_masked_loss + l2_regularization
+            loss.backward()
+            optimizer.step()
+        scheduler.step() # scheduler updates per epoch
+
+        #_________________WandB_Logging every 10 epochs________________
+
+        if epoch%10==0:
+            wandb.log({'epoch':epoch})
+            wandb.log({'weight_regularization(l2)': l2_regularization.item()})
+            wandb.log({'masked_mse_loss': masked_loss.item()})
+            wandb.log({'antimasked_mse_loss': anti_masked_loss.item()})
+            wandb.log({'total_loss':loss.item()})
+
+
+def main(args, hps=None):
 
     #________________________WANDB Initialization______________________
 
-
-    hps = sample_hyperparameters(args.sweep_id)
+    if hps is None:
+        hps = sample_hyperparameters(args.sweep_id)
 
     experiment_name = f"rnn-dynamics-rotated-{args.activation_function}-hyperparam-search"
 
@@ -74,7 +112,6 @@ def main(args):
 
 
     input_size = 1
-    n_epochs = args.n_epochs
 
     # pack dataset and initialize model and optimizer
     loader = torch.utils.data.DataLoader(gps, batch_size=config.batch_size, shuffle=True)
@@ -102,34 +139,10 @@ def main(args):
 
   #__________________________RNN Training______________________________
 
-
-    for epoch in range(n_epochs):
-        model.train()
-        for (X, y) in loader:
-            optimizer.zero_grad()
-            y_pred = model(X)
-            mask = y > 0
-            anti_mask = y == 0
-            l2_regularization = config.l2_reg*torch.linalg.norm(model.W_hh.weight, ord=2)
-            masked_loss = config.masked_reg*loss_function(y[mask],y_pred[mask])
-            anti_masked_loss = config.anti_masked_reg*loss_function(y[anti_mask],y_pred[anti_mask])
-            loss = masked_loss + anti_masked_loss + l2_regularization
-            loss.backward()
-            optimizer.step()
-        scheduler.step() # scheduler updates per epoch
+    train(model, loader, optimizer, scheduler, config, args.n_epochs)
 
 
-  #_________________WandB_Logging every 10 epochs________________
-
-        if epoch%10==0:
-            wandb.log({'epoch':epoch})
-            wandb.log({'weight_regularization(l2)': l2_regularization.item()})
-            wandb.log({'masked_mse_loss': masked_loss.item()})
-            wandb.log({'antimasked_mse_loss': anti_masked_loss.item()})
-            wandb.log({'total_loss':loss.item()})
-
-
-#_________________Final Logging to WandB________________
+#_________________Logging to WandB________________
 
     # log sample prediction
 
@@ -158,14 +171,74 @@ def main(args):
         mse_losses.append(mse_loss.item())
     avg_mse_loss = sum(mse_losses) / len(mse_losses)
     W_hh_eigvals = np.linalg.eigvals(model.W_hh.weight.detach().numpy())
-    # add date and time to the filename to avoid overwriting
-    
-    timestamp = datetime.now().strftime("%y%m%d")
-    with open(f'/lustre/fsn1/projects/rech/pbx/utg98xt/{experiment_name}/hyperparam_logs/{timestamp}_{args.sweep_id}.txt', 'w') as f:
-        fcntl.flock(f, fcntl.LOCK_EX)  # acquire an exclusive lock
-        f.write(json.dumps({"Hyperparameters": config, "Average MSE Loss": avg_mse_loss, "W_hh Eigenvalues": W_hh_eigvals.tolist()}, indent=4))
-        fcntl.flock(f, fcntl.LOCK_UN)  # release the lock
+    eig_imag = eigen_imag_score(W_hh_eigvals)
+    composite = combined_score(avg_mse_loss, eig_imag, lambda_im=1.0)
 
+    # Ensure paths exist
+    log_dir = Path(f'/lustre/fsn1/projects/rech/pbx/utg98xt/{experiment_name}/hyperparam_logs')
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%y%m%d")
+    run_log_path = log_dir / f"{timestamp}_{args.sweep_id}.json"
+
+    config_dict = dict(config)
+    run_record = {
+        "sweep_id": args.sweep_id,
+        "timestamp": datetime.now().isoformat(),
+        "Hyperparameters": config_dict,
+        "Average MSE Loss": avg_mse_loss,
+        "W_hh Eigenvalues": W_hh_eigvals.tolist(),
+        "Eigen Imag Score": eig_imag,
+        "Composite Score": composite,
+    }
+
+    # Write per-run log
+    with open(run_log_path, 'w') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        json.dump(run_record, f, indent=4)
+        fcntl.flock(f, fcntl.LOCK_UN)
+
+    # Append full history (optional but useful)
+    history_path = log_dir / 'hyperparam_search_history.json'
+    if history_path.exists():
+        with open(history_path, 'r+') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                history_data = json.load(f)
+            except json.JSONDecodeError:
+                history_data = []
+            history_data.append(run_record)
+            f.seek(0)
+            json.dump(history_data, f, indent=4)
+            f.truncate()
+            fcntl.flock(f, fcntl.LOCK_UN)
+    else:
+        with open(history_path, 'w') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            json.dump([run_record], f, indent=4)
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+    # Maintain best hyperparameters across runs using composite score (mse + eigimag penalty)
+    best_path = log_dir / 'best_hyperparameters.json'
+    if best_path.exists():
+        with open(best_path, 'r+') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                existing_best = json.load(f)
+            except json.JSONDecodeError:
+                existing_best = None
+            if existing_best is None or run_record['Composite Score'] < existing_best.get('Composite Score', float('inf')):
+                f.seek(0)
+                json.dump(run_record, f, indent=4)
+                f.truncate()
+            fcntl.flock(f, fcntl.LOCK_UN)
+    else:
+        with open(best_path, 'w') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            json.dump(run_record, f, indent=4)
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+    return run_record
 
 
 #__________________________End of Main______________________________
